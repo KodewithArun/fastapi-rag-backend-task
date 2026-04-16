@@ -7,16 +7,15 @@ Integrates Embeddings, Qdrant, Redis Memory, and the LLM.
 Includes LLM tool calling for Interview Booking.
 """
 import logging
-import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate
 from app.services.llm_provider import get_llm_provider
 from app.services.embeddings import get_embedder
 from app.services.memory import get_memory_service
 from app.db.vector_store import QdrantService
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,22 +74,38 @@ class RAGService:
         """
         The core of the custom RAG pipeline:
         1. Embed Query
-        2. Retrieve Context from Qdrant
+        2. Retrieve Context from Qdrant (with threshold/deduplication)
         3. Fetch Memory from Redis
-        4. Build Prompt
-        5. Invoke LLM and Handle Tools (with loop protection)
-        6. Save Memory
+        4. Build Prompt Explicitly
+        5. Invoke LLM and Handle Tools (single pass)
+        6. Save Memory (clean: only human + final AI message)
         """
-        # 1. Fetch relevant context with improved formatting (Source Separation)
+        # 1. Fetch relevant context with improved formatting and deduplication
         try:
             query_vector = self.embedder.embed_query(query)
-            # Retrieve top 5 most similar chunks
-            results = await self.qdrant.search_similar(query_vector, limit=5, document_id=document_id)
+            # Retrieve slightly more to allow for deduplication/filtering
+            results = await self.qdrant.search_similar(query_vector, limit=8, document_id=document_id)
             
             context_blocks = []
+            seen_texts = set()
+            
             for res in results:
+                # Optional score threshold filtering if your vector DB populates score
+                score = res.get('score', 1.0)
+                if score < 0.65:
+                    continue
+                    
+                text = res.get('text', '').strip()
+                if not text or text in seen_texts:
+                    continue  # Skip empty or duplicate chunks
+                    
+                seen_texts.add(text)
                 doc_info = f"Document ID: {res.get('document_id', 'Unknown')} (Chunk {res.get('chunk_index', 'Unknown')})"
-                context_blocks.append(f"Source [{doc_info}]:\n{res.get('text', '')}")
+                context_blocks.append(f"Source [{doc_info}]:\n{text}")
+                
+                # Enforce limit of 5 high-quality unique chunks
+                if len(context_blocks) >= 5:
+                    break
                 
             combined_context = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         except Exception as e:
@@ -102,8 +117,8 @@ class RAGService:
         # Token/context trimming: Keep max 10 recent messages (5 turns)
         trimmed_history = chat_history[-10:] if len(chat_history) > 10 else chat_history
 
-        # 3. Construct System Prompt
-        system_instruction = f"""You are a helpful AI assistant for Palm Mind AI.
+        # 3. Construct System Prompt using structured definition
+        system_instruction = """You are a helpful AI assistant for Palm Mind AI.
 You have access to the following retrieved documents to help answer user queries.
 If the answer is not in the context, clearly state that you don't know based on the provided documents.
 
@@ -112,51 +127,47 @@ Context Information:
 
 You also have the ability to book interviews. 
 If a user wants to book an interview, you MUST collect ALL of the following: Name, Email, Date, and Time.
-Do not invoke the booking tool until you have gathered all 4 pieces of information.
-"""
+Do not invoke the booking tool until you have gathered all 4 pieces of information."""
         
-        # 4. Build message sequence
-        messages = [SystemMessage(content=system_instruction)]
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_instruction)
+        ])
+        
+        # Inject the structured template variables
+        sys_msg = prompt.format_messages(combined_context=combined_context)[0]
+
+        # 4. Build message sequence explicitly
+        messages = [sys_msg]
         messages.extend(trimmed_history)
         
         user_msg = HumanMessage(content=query)
         messages.append(user_msg)
         
-        # Track ONLY the new messages for safe deduplicated appending to Memory layer
-        new_messages_to_save = [user_msg]
+        # We use the underlying LLM with tools bound
+        llm_to_use = self.llm_with_tools if self.llm_with_tools else self.llm_provider.providers[0][1].llm
 
-        # 5. Invoke LLM with Loop Protection
+        # 5. Invoke LLM and handle tools directly (Single Pass Tool Pipeline)
         try:
-            # We use the underlying LLM with tools bound
-            llm_to_use = self.llm_with_tools if self.llm_with_tools else self.llm_provider.providers[0][1].llm
+            # Initial forward generation
+            ai_msg = await llm_to_use.ainvoke(messages)
             
-            max_iterations = 3
-            current_iteration = 0
-            
-            while current_iteration < max_iterations:
-                ai_msg = await llm_to_use.ainvoke(messages)
-                
+            # Check for tool call requests explicitly
+            if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                # Add the assistant's context request to our current processing stack
                 messages.append(ai_msg)
-                new_messages_to_save.append(ai_msg)
                 
-                # Break if no tool calls are requested
-                if not hasattr(ai_msg, "tool_calls") or not ai_msg.tool_calls:
-                    break
-                    
-                # Handle Tool Calls (Interview Booking)
+                # Execute all requested tools
                 for tool_call in ai_msg.tool_calls:
                     if tool_call["name"] == "BookInterview":
-                        # Process booking with Pydantic validation and DB integration
                         booking_response = await self._handle_booking(tool_call["args"], db)
-                        
                         tool_msg = ToolMessage(tool_call_id=tool_call["id"], content=booking_response)
                         messages.append(tool_msg)
-                        new_messages_to_save.append(tool_msg)
                         
-                current_iteration += 1
+                # Provide the outcome to the LLM to generate the conversational response
+                ai_msg = await llm_to_use.ainvoke(messages)
 
-            # 6. Save to Redis safely
-            await self.memory.add_messages(session_id, new_messages_to_save)
+            # 6. Save to Redis securely and minimally (Only actual user queries and final conversational replies!)
+            await self.memory.add_messages(session_id, [user_msg, ai_msg])
             
             return str(ai_msg.content)
             
