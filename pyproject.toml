@@ -15,4 +15,6 @@ dependencies = [
     "langchain-huggingface",
     "sentence-transformers",
     "pymupdf>=1.27.2.2",
+    "langchain-text-splitters>=1.1.1",
+    "tiktoken>=0.12.0",
 ]
