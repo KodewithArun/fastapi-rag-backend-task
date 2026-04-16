@@ -13,5 +13,6 @@ dependencies = [
     "redis",
     "langchain-core",
     "langchain-huggingface",
-    "sentence-transformers",  # Required for local HF embeddings
+    "sentence-transformers",
+    "pymupdf>=1.27.2.2",
 ]
