@@ -1,6 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Integer, String
+
 from app.db.session import Base
+
 
 class InterviewBooking(Base):
     __tablename__ = "interview_bookings"

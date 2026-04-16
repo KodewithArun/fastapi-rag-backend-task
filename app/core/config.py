@@ -4,6 +4,7 @@ Uses Pydantic BaseSettings to read from environment variables.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     # App Settings
     PROJECT_NAME: str

@@ -6,7 +6,9 @@ It relies on an Abstract Base Class (ABC) to ensure all parsers follow the same 
 """
 from abc import ABC, abstractmethod
 from typing import BinaryIO
+
 import pymupdf
+
 
 class BaseDocumentParser(ABC):
     """

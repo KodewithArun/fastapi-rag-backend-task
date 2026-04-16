@@ -9,10 +9,12 @@ Provides vector embedding strategies for chunks and queries:
 from abc import ABC, abstractmethod
 from typing import List
 
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
 from app.core.config import settings
+
 
 class BaseEmbedder(ABC):
     """Abstract Base Class for all Embedding providers."""

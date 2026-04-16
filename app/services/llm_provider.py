@@ -8,11 +8,11 @@ if rate limits or outages occur.
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Any
+from typing import Any, List
 
 from langchain_core.messages import BaseMessage
-from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 

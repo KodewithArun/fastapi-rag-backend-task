@@ -1,5 +1,7 @@
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
 
 class DocumentResponse(BaseModel):
     """Response schema for a successfully ingested document."""

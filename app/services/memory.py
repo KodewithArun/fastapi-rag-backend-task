@@ -5,8 +5,9 @@ Manages conversational history for multi-turn queries.
 Implements an abstract base class with a Redis-backed storage engine
 to seamlessly maintain the context of the user's RAG and booking chat.
 """
-import logging
 import json
+import logging
+import time
 from abc import ABC, abstractmethod
 from typing import List
 
@@ -17,9 +18,6 @@ from langchain_core.messages.utils import messages_from_dict, messages_to_dict
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-
-import time
 
 # Versioning for stored payload formats
 MEMORY_FORMAT_VERSION = "1.0"

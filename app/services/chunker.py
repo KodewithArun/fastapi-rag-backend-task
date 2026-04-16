@@ -7,7 +7,9 @@ Uses Abstract Base Classes.
 """
 from abc import ABC, abstractmethod
 from typing import List
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter, TokenTextSplitter
+
 
 class BaseChunker(ABC):
     """Abstract Base Class for text chunkers."""

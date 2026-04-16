@@ -1,15 +1,16 @@
-import logging
-from typing import Optional
-from fastapi import APIRouter, File, UploadFile, Form, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 import io
+import logging
+import asyncio
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.db.vector_store import QdrantService
 from app.models.metadata import DocumentMetadata
 from app.schemas.document import DocumentResponse
-from app.services.document_parser import get_document_parser
 from app.services.chunker import get_chunker
+from app.services.document_parser import get_document_parser
 from app.services.embeddings import get_embedder
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,6 @@ router = APIRouter(prefix="/documents", tags=["Document Ingestion"])
 qdrant_service = QdrantService()
 
 # Automatically attempt to init on load
-import asyncio
 try:
     asyncio.create_task(qdrant_service.initialize_collection())
 except Exception:

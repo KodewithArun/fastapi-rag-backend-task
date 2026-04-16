@@ -7,15 +7,17 @@ Integrates Embeddings, Qdrant, Redis Memory, and the LLM.
 Includes LLM tool calling for Interview Booking.
 """
 import logging
-from typing import List, Optional
+from typing import Optional
+
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate
-from app.services.llm_provider import get_llm_provider
-from app.services.embeddings import get_embedder
-from app.services.memory import get_memory_service
 from app.db.vector_store import QdrantService
+from app.models.booking import InterviewBooking
+from app.services.embeddings import get_embedder
+from app.services.llm_provider import get_llm_provider
+from app.services.memory import get_memory_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,6 @@ class RAGService:
             validated_booking = BookInterview(**booking_args)
             
             # Save to PostgreSQL
-            from app.models.booking import InterviewBooking
             new_booking = InterviewBooking(
                 name=validated_booking.name,
                 email=validated_booking.email,

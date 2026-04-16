@@ -1,8 +1,9 @@
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional
 from sqlalchemy.orm import Session
-import logging
 
 from app.db.session import get_db
 from app.services.rag import RAGService
