@@ -18,17 +18,19 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class QdrantService:
-    """
-    Standardized asynchronous service layer for Qdrant. 
-    Handles batch upserts, filtering, and enhanced metadata for observability.
-    """
     def __init__(self, collection_name: str = "documents"):
         self.collection_name = collection_name
-        self.client = AsyncQdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT,
-            api_key=settings.QDRANT_API_KEY
-        )
+        self._client: Optional[AsyncQdrantClient] = None
+        
+    @property
+    def client(self) -> AsyncQdrantClient:
+        if self._client is None:
+            url = getattr(settings, "QDRANT_URL", f"http://{settings.QDRANT_HOST}:{settings.QDRANT_PORT}")
+            self._client = AsyncQdrantClient(
+                url=url,
+                api_key=settings.QDRANT_API_KEY
+            )
+        return self._client
 
     async def initialize_collection(self, vector_size: int = 384) -> bool:
         """
@@ -56,10 +58,6 @@ class QdrantService:
         additional_metadata: Optional[List[Dict[str, Any]]] = None,
         batch_size: int = 100
     ) -> bool:
-        """
-        Asynchronously stores chunks and their vectors in batches to handle large documents.
-        Injects rich metadata (timestamps, indices, pages) for better retrieval.
-        """
         if len(chunks) != len(vectors):
             raise ValueError("Mismatched chunks and vectors count.")
             
@@ -111,9 +109,6 @@ class QdrantService:
         limit: int = 5,
         document_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieves similar vectors with optional metadata payload filtering.
-        """
         query_filter = None
         if document_id:
             query_filter = Filter(
@@ -126,9 +121,9 @@ class QdrantService:
             )
 
         try:
-            search_result = await self.client.search(
+            search_result = await self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=query_filter,
                 limit=limit,
                 with_payload=True
@@ -143,7 +138,7 @@ class QdrantService:
                     "text": hit.payload.get("text"),
                     "metadata": {k: v for k, v in hit.payload.items() if k not in ["document_id", "text", "chunk_index"]}
                 }
-                for hit in search_result
+                for hit in search_result.points
             ]
         except Exception as e:
             logger.error(f"Failed to search Qdrant: {str(e)}")

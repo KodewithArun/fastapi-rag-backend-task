@@ -1,11 +1,3 @@
-"""
-Embeddings Service
-
-Provides vector embedding strategies for chunks and queries:
-- Local HuggingFace embeddings (via sentence-transformers)
-- OpenAI embeddings
-- Google Gemini embeddings
-"""
 from abc import ABC, abstractmethod
 from typing import List
 
@@ -17,20 +9,15 @@ from app.core.config import settings
 
 
 class BaseEmbedder(ABC):
-    """Abstract Base Class for all Embedding providers."""
-    
     @abstractmethod
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embeds a list of text chunks."""
         pass
 
     @abstractmethod
     def embed_query(self, text: str) -> List[float]:
-        """Embeds a single query string."""
         pass
 
 class LocalHFEmbedder(BaseEmbedder):
-    """Local HuggingFace model running via sentence-transformers."""
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
         self.embeddings = HuggingFaceEmbeddings(model_name=model_name)
 
@@ -41,7 +28,6 @@ class LocalHFEmbedder(BaseEmbedder):
         return self.embeddings.embed_query(text)
 
 class OpenAIAPIEmbedder(BaseEmbedder):
-    """Uses OpenAI's Embedding API."""
     def __init__(self, model_name: str = "text-embedding-3-small"):
         if not settings.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is missing from environment variables.")

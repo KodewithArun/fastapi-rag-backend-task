@@ -12,8 +12,7 @@ from abc import ABC, abstractmethod
 from typing import List
 
 import redis.asyncio as redis
-from langchain_core.messages import BaseMessage
-from langchain_core.messages.utils import messages_from_dict, messages_to_dict
+from langchain_core.messages import BaseMessage, messages_from_dict, messages_to_dict
 
 from app.core.config import settings
 
@@ -23,35 +22,24 @@ logger = logging.getLogger(__name__)
 MEMORY_FORMAT_VERSION = "1.0"
 
 class BaseMemoryService(ABC):
-    """Abstract Base Class defining the contract for Chat Memory services."""
-
     @abstractmethod
     async def get_chat_history(self, session_id: str) -> List[BaseMessage]:
-        """Retrieves the full chat history for a given session."""
         pass
 
     @abstractmethod
     async def add_messages(self, session_id: str, messages: List[BaseMessage]) -> None:
-        """Appends new messages to the session's history."""
         pass
 
     @abstractmethod
     async def clear_history(self, session_id: str) -> None:
-        """Deletes the chat history for a session."""
         pass
 
     @abstractmethod
     async def close(self) -> None:
-        """Gracefully close connections."""
         pass
 
 
 class RedisMemoryService(BaseMemoryService):
-    """
-    Redis implementation of the Memory Service.
-    Stores and retrieves LangChain BaseMessages using Redis Lists.
-    Maintains a rolling window of history (LTRIM) and refreshes TTL on read/write.
-    """
     def __init__(self, prefix: str = "chat_history:", ttl_seconds: int = 86400, max_messages: int = 50):
         self.prefix = prefix
         self.ttl = ttl_seconds

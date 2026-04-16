@@ -22,11 +22,6 @@ class ChatResponse(BaseModel):
 
 @router.post("/", response_model=ChatResponse)
 async def chat_with_rag(request: ChatRequest, db: Session = Depends(get_db)):
-    """
-    Core Chat Endpoint for the completely Custom RAG flow.
-    Takes a query, talks to the RAGService which fetches Qdrant context & Redis Memory, 
-    then uses the chosen LLM provider to formulate an answer (and handles BookInterview tool calls!).
-    """
     rag_service = RAGService()
     try:
         response_text = await rag_service.get_response(

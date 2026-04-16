@@ -1,11 +1,3 @@
-"""
-LLM Provider Service
-
-Creates an Abstract Base Class for LLM interaction and implements an 
-AutoSwitchingLLMProvider that attempts to use our primary LLM, 
-and gracefully falls back to alternative providers (e.g. OpenAI -> Gemini)
-if rate limits or outages occur.
-"""
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, List
@@ -19,25 +11,14 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class BaseLLMProvider(ABC):
-    """Abstract Base Class defining the contract for LLM generation."""
     @abstractmethod
     async def generate(self, messages: List[BaseMessage]) -> Any:
-        """
-        Generates a response using the configured LLM.
-        
-        Args:
-            messages (List[BaseMessage]): A list of Langchain BaseMessages (System, Human, AI).
-            
-        Returns:
-            Any: The raw generated AIMessage from the LLM.
-        """
         pass
 
 class OpenAIProvider(BaseLLMProvider):
-    """Integration with OpenAI's Chat Models."""
-    def __init__(self, model_name: str = "gpt-4o-mini"):
+    def __init__(self, model_name: str | None = None):
         self.llm = ChatOpenAI(
-            model=model_name, 
+            model=model_name or settings.OPENAI_MODEL_NAME, 
             openai_api_key=settings.OPENAI_API_KEY,
             temperature=0.3
         )
@@ -46,11 +27,10 @@ class OpenAIProvider(BaseLLMProvider):
         return await self.llm.ainvoke(messages)
 
 class GeminiProvider(BaseLLMProvider):
-    """Integration with Google Gemini Chat Models."""
-    def __init__(self, model_name: str = "gemini-1.5-flash"):
+    def __init__(self, model_name: str | None = None):
         api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
         self.llm = ChatGoogleGenerativeAI(
-            model=model_name, 
+            model=model_name or settings.GEMINI_MODEL_NAME, 
             google_api_key=api_key,
             temperature=0.3
         )
@@ -59,27 +39,18 @@ class GeminiProvider(BaseLLMProvider):
         return await self.llm.ainvoke(messages)
 
 class AutoSwitchingLLMProvider(BaseLLMProvider):
-    """
-    Implements a resilient auto-switching feature.
-    If the first mapped API provider fails (e.g. due to rate limits or API outage),
-    it immediately falls back to the next available provider.
-    """
     def __init__(self):
         self.providers = []
         
-        # Priority 1: OpenAI
         if settings.OPENAI_API_KEY and "your_" not in settings.OPENAI_API_KEY:
             self.providers.append(("OpenAI", OpenAIProvider()))
             
-        # Priority 2: Gemini (Fallback)
         api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
         if api_key and "your_" not in api_key:
             self.providers.append(("Gemini", GeminiProvider()))
             
         if not self.providers:
-            # We don't raise an error strictly on init to prevent app crash if keys are missing initially,
-            # but we will log a severe warning.
-            logger.warning("No valid LLM providers configured in .env (OpenAI or Gemini).")
+            logger.warning("No valid LLM providers configured.")
 
     async def generate(self, messages: List[BaseMessage]) -> Any:
         if not self.providers:
@@ -88,7 +59,6 @@ class AutoSwitchingLLMProvider(BaseLLMProvider):
         last_exception = None
         for name, provider in self.providers:
             try:
-                # logger.debug(f"Attempting generation with {name}...")
                 response = await provider.generate(messages)
                 return response
             except Exception as e:
