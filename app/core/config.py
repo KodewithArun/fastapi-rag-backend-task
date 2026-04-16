@@ -5,18 +5,22 @@ Uses Pydantic BaseSettings to read from environment variables.
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Palm Mind AI Backend"
-    VERSION: str = "1.0.0"
-    API_V1_STR: str = "/api/v1"
+    # App Settings
+    PROJECT_NAME: str
+    VERSION: str
+    API_V1_STR: str
     
     # Qdrant Vector DB Settings
-    QDRANT_HOST: str = "localhost"
-    QDRANT_PORT: int = 6333
+    QDRANT_HOST: str
+    QDRANT_PORT: int
     QDRANT_API_KEY: str | None = None
 
     # Redis Settings
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    REDIS_HOST: str
+    REDIS_PORT: int
+
+    # Metadata PostgreSQL DB Settings
+    DATABASE_URL: str
 
     # Model Settings (LLM & Embeddings)
     HUGGINGFACE_API_KEY: str | None = None
