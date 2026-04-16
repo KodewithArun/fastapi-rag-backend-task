@@ -20,7 +20,9 @@ class Settings(BaseSettings):
 
     # Model Settings (LLM & Embeddings)
     HUGGINGFACE_API_KEY: str | None = None
-    OPENAI_API_KEY: str | None = None  # Example for auto-switching
+    OPENAI_API_KEY: str | None = None
+    GOOGLE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 
