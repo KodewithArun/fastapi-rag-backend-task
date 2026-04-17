@@ -1,6 +1,6 @@
-# Fast Api RAG Backend Task 
+# Palm Mind AI Backend
 
-It's a clean, modular FastAPI backend for Retrieval-Augmented Generation (RAG). It features PDF/TXT ingestion with dual chunking, Qdrant vector search, custom RAG (no LangChain RetrievalQAChain), Redis chat memory, and LLM-powered interview booking. Built for production, with strong typing, config management, and no UI—just robust APIs.
+A clean FastAPI backend for Retrieval-Augmented Generation (RAG) with PDF ingestion, Qdrant vector search,LLM, and Redis chat memory.
 
 ---
 
