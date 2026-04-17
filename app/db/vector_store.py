@@ -21,14 +21,16 @@ class QdrantService:
     def __init__(self, collection_name: str = "documents"):
         self.collection_name = collection_name
         self._client: Optional[AsyncQdrantClient] = None
+        self._collection_ready = False
         
     @property
     def client(self) -> AsyncQdrantClient:
         if self._client is None:
             url = getattr(settings, "QDRANT_URL", f"http://{settings.QDRANT_HOST}:{settings.QDRANT_PORT}")
+            api_key = settings.QDRANT_API_KEY if str(url).startswith("https://") else None
             self._client = AsyncQdrantClient(
                 url=url,
-                api_key=settings.QDRANT_API_KEY
+                api_key=api_key
             )
         return self._client
 
@@ -44,11 +46,16 @@ class QdrantService:
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
                 )
-                return True
-            return False
+            self._collection_ready = True
+            return True
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant collection: {str(e)}")
             raise
+
+    async def _ensure_collection(self, vector_size: int) -> None:
+        if self._collection_ready:
+            return
+        await self.initialize_collection(vector_size=vector_size)
 
     async def upsert_chunks(
         self, 
@@ -60,9 +67,13 @@ class QdrantService:
     ) -> bool:
         if len(chunks) != len(vectors):
             raise ValueError("Mismatched chunks and vectors count.")
+        if not vectors:
+            raise ValueError("No vectors provided for upsert.")
             
         if additional_metadata and len(additional_metadata) != len(chunks):
             raise ValueError("Mismatched metadata and chunks count.")
+
+        await self._ensure_collection(vector_size=len(vectors[0]))
 
         points = []
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -109,6 +120,11 @@ class QdrantService:
         limit: int = 5,
         document_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        if not query_vector:
+            return []
+
+        await self._ensure_collection(vector_size=len(query_vector))
+
         query_filter = None
         if document_id:
             query_filter = Filter(
