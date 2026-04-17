@@ -62,7 +62,7 @@ It's a clean, modular FastAPI backend for Retrieval-Augmented Generation (RAG). 
 
 ## System Flow
 
-![System Flow Diagram](flowdiagarm.svg)
+![System Flow Diagram](flowdiagram.svg)
 ---
 
 ## Usage
