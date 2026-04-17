@@ -11,3 +11,8 @@ wheels/
 .env
 # documents
 task_requirements.md
+
+# logs
+logs/
+logs.log
+
