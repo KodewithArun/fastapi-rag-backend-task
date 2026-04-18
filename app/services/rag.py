@@ -3,7 +3,8 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+from sqlalchemy.orm import Session
 
 from app.db.vector_store import QdrantService
 from app.models.booking import InterviewBooking
@@ -13,11 +14,53 @@ from app.services.memory import get_memory_service
 
 logger = logging.getLogger(__name__)
 
-class BookInterview(BaseModel):
-    name: str = Field(description="Full name of the candidate")
-    email: str = Field(description="Email address of the candidate")
-    date: str = Field(description="Date of the interview (YYYY-MM-DD)")
-    time: str = Field(description="Time of the interview (HH:MM AM/PM)")
+
+def create_book_interview_tool(db: Session):
+    """Return a LangChain tool bound to the request-scoped DB session."""
+
+    @tool
+    def book_interview(
+        name: str,
+        email: str,
+        date: str,
+        time: str,
+    ) -> str:
+        """Book an interview for a candidate.
+
+        Call only after the user has provided their full name, email, interview date (YYYY-MM-DD),
+        and time (HH:MM AM/PM).
+        """
+        try:
+            new_booking = InterviewBooking(
+                name=name.strip(),
+                email=email.strip(),
+                date=date.strip(),
+                time=time.strip(),
+            )
+            db.add(new_booking)
+            db.commit()
+            db.refresh(new_booking)
+
+            logger.info(
+                "Interview booked for %s on %s at %s (DB ID: %s)",
+                name.strip(),
+                date.strip(),
+                time.strip(),
+                new_booking.id,
+            )
+            return (
+                f"Successfully booked interview for {name.strip()} on {date.strip()} "
+                f"at {time.strip()}. Your booking ID is {new_booking.id}."
+            )
+        except Exception as e:
+            logger.error("Failed to validate or process booking: %s", e)
+            db.rollback()
+            return (
+                "Failed to book interview due to invalid information provided. Please try again."
+            )
+
+    return book_interview
+
 
 class RAGService:
     def __init__(self, embed_provider: str = "huggingface"):
@@ -25,62 +68,34 @@ class RAGService:
         self.embedder = get_embedder(embed_provider)
         self.qdrant = QdrantService()
         self.memory = get_memory_service()
-        
-        try:
-            self.llm_with_tools = self.llm_provider.providers[0][1].llm.bind_tools([BookInterview])
-        except Exception as e:
-            logger.warning(f"Could not bind tools directly to LLM, fallback to normal generation: {e}")
-            self.llm_with_tools = None
 
-    async def _handle_booking(self, booking_args: dict, db) -> str:
-        try:
-            validated_booking = BookInterview(**booking_args)
-            
-            new_booking = InterviewBooking(
-                name=validated_booking.name,
-                email=validated_booking.email,
-                date=validated_booking.date,
-                time=validated_booking.time
-            )
-            db.add(new_booking)
-            db.commit()
-            db.refresh(new_booking)
-            
-            logger.info(f"Interview booked: {validated_booking.model_dump_json()} (DB ID: {new_booking.id})")
-            return f"Successfully booked interview for {validated_booking.name} on {validated_booking.date} at {validated_booking.time}. Your booking ID is {new_booking.id}."
-        except Exception as e:
-            logger.error(f"Failed to validate or process booking arguments: {e}")
-            if db:
-                db.rollback()
-            return "Failed to book interview due to invalid information provided. Please try again."
-
-    async def get_response(self, session_id: str, query: str, db, document_id: Optional[str] = None) -> str:
+    async def get_response(self, session_id: str, query: str, db: Session, document_id: Optional[str] = None) -> str:
         try:
             query_vector = self.embedder.embed_query(query)
             results = await self.qdrant.search_similar(query_vector, limit=8, document_id=document_id)
-            
+
             context_blocks = []
             seen_texts = set()
-            
+
             for res in results:
                 score = res.get('score', 1.0)
                 # Lowered score threshold for HF embeddings
                 if score < 0.20:
                     continue
-                    
+
                 text = res.get('text', '').strip()
                 if not text or text in seen_texts:
                     continue
-                    
+
                 seen_texts.add(text)
                 doc_info = f"Document ID: {res.get('document_id', 'Unknown')}"
                 if res.get('chunk_index') is not None:
                     doc_info += f" (Chunk {res.get('chunk_index')})"
                 context_blocks.append(f"Source [{doc_info}]:\n{text}")
-                
+
                 if len(context_blocks) >= 5:
                     break
-                
+
             combined_context = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         except Exception as e:
             logger.error(f"Failed to retrieve context: {e}")
@@ -99,47 +114,60 @@ Context Information:
 You also have the ability to book interviews. 
 If a user wants to book an interview, you MUST collect ALL of the following: Name, Email, Date, and Time.
 Do not invoke the booking tool until you have gathered all 4 pieces of information."""
-        
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_instruction)
         ])
-        
+
         sys_msg = prompt.format_messages(combined_context=combined_context)[0]
 
         messages = [sys_msg]
         messages.extend(trimmed_history)
-        
+
         user_msg = HumanMessage(content=query)
         messages.append(user_msg)
-        
-        llm_to_use = self.llm_with_tools if self.llm_with_tools else self.llm_provider.providers[0][1].llm
+
+        book_tool = create_book_interview_tool(db)
+        base_llm = self.llm_provider.providers[0][1].llm
+        try:
+            llm_to_use = base_llm.bind_tools([book_tool])
+        except Exception as e:
+            logger.warning("Could not bind tools to LLM, fallback to normal generation: %s", e)
+            llm_to_use = base_llm
 
         try:
             ai_msg = await llm_to_use.ainvoke(messages)
-            
+
             if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
                 messages.append(ai_msg)
-                
+
                 for tool_call in ai_msg.tool_calls:
-                    if tool_call["name"] == "BookInterview":
-                        booking_response = await self._handle_booking(tool_call["args"], db)
-                        tool_msg = ToolMessage(tool_call_id=tool_call["id"], content=booking_response)
+                    if tool_call["name"] == book_tool.name:
+                        try:
+                            booking_response = book_tool.invoke(tool_call["args"])
+                        except Exception as e:
+                            logger.error("book_interview tool invocation failed: %s", e)
+                            booking_response = (
+                                "Failed to book interview. Please try again."
+                            )
+                        tool_msg = ToolMessage(
+                            tool_call_id=tool_call["id"],
+                            content=booking_response,
+                        )
                         messages.append(tool_msg)
-                        
+
                 ai_msg = await llm_to_use.ainvoke(messages)
 
             await self.memory.add_messages(session_id, [user_msg, ai_msg])
-            
+
             content = ai_msg.content
             if isinstance(content, list):
-                # Gemini often returns a list of dictionaries for content blocks
                 text_content = " ".join([c.get("text", "") for c in content if isinstance(c, dict) and "text" in c])
                 if not text_content:
                     text_content = str(content)
                 return text_content
             return str(content)
-            
+
         except Exception as e:
             logger.error(f"LLM Generation failed: {e}")
             return "I'm sorry, I am currently experiencing issues."
-
