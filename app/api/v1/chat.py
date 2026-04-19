@@ -1,28 +1,22 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_rag_service
 from app.db.session import get_db
 from app.services.rag import RAGService
-
+from app.schemas.chat import ChatRequest, ChatResponse
 router = APIRouter(prefix="/chat", tags=["Conversational RAG"])
 logger = logging.getLogger(__name__)
 
-class ChatRequest(BaseModel):
-    session_id: str = Field(..., description="Unique ID for the chat session, used for Redis Memory")
-    query: str = Field(..., description="User's query")
-    document_id: Optional[str] = Field(None, description="Optional Document ID to filter vectors by")
-
-class ChatResponse(BaseModel):
-    session_id: str
-    reply: str
 
 @router.post("/", response_model=ChatResponse)
-async def chat_with_rag(request: ChatRequest, db: Session = Depends(get_db)):
-    rag_service = RAGService()
+async def chat_with_rag(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    rag_service: RAGService = Depends(get_rag_service),
+):
     try:
         response_text = await rag_service.get_response(
             session_id=request.session_id,

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter, TokenTextSplitter
 
 
@@ -8,6 +9,12 @@ class BaseChunker(ABC):
     @abstractmethod
     def chunk(self, text: str) -> List[str]:
         pass
+
+    @abstractmethod
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
+        """Split documents; metadata kept on chunks."""
+        pass
+
 
 class RecursiveCharacterChunker(BaseChunker):
     def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
@@ -20,6 +27,10 @@ class RecursiveCharacterChunker(BaseChunker):
     def chunk(self, text: str) -> List[str]:
         return self.splitter.split_text(text)
 
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
+        return self.splitter.split_documents(documents)
+
+
 class TokenChunker(BaseChunker):
     def __init__(self, chunk_size: int = 250, chunk_overlap: int = 50):
         self.splitter = TokenTextSplitter(
@@ -30,6 +41,10 @@ class TokenChunker(BaseChunker):
 
     def chunk(self, text: str) -> List[str]:
         return self.splitter.split_text(text)
+
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
+        return self.splitter.split_documents(documents)
+
 
 def get_chunker(strategy: str = "recursive") -> BaseChunker:
     if strategy == "recursive":

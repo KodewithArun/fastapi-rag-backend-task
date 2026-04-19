@@ -18,3 +18,4 @@ class DocumentMetadata(Base):
     file_type = Column(String, nullable=False)  # Example: .pdf, .txt
     chunk_strategy = Column(String, nullable=False)  # Strategy used to split the doc
     chunks_count = Column(Integer, nullable=False)
+    content_hash = Column(String(64), nullable=True, unique=True)

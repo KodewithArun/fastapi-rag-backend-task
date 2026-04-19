@@ -1,73 +1,96 @@
-import logging
-from abc import ABC, abstractmethod
-from typing import Any, List
+from __future__ import annotations
 
-from langchain_core.messages import BaseMessage
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
 
-class BaseLLMProvider(ABC):
-    @abstractmethod
-    async def generate(self, messages: List[BaseMessage]) -> Any:
-        pass
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
-class OpenAIProvider(BaseLLMProvider):
-    def __init__(self, model_name: str | None = None):
-        self.llm = ChatOpenAI(
-            model=model_name or settings.OPENAI_MODEL_NAME, 
+
+def _llm_yaml_path() -> Path:
+    if settings.LLM_CONFIG_PATH:
+        p = Path(settings.LLM_CONFIG_PATH)
+        return p if p.is_absolute() else Path.cwd() / p
+    return _project_root() / "config" / "llm.yaml"
+
+
+class OpenaiLLMConfig(BaseModel):
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.3
+
+
+class GeminiLLMConfig(BaseModel):
+    model: str = "gemini-pro"
+    temperature: float = 0.3
+
+
+class GroqLLMConfig(BaseModel):
+    model: str = "llama-3.3-70b-versatile"
+    temperature: float = 0.3
+
+
+class LLMYamlConfig(BaseModel):
+    provider: Literal["openai", "gemini", "groq"]
+    openai: OpenaiLLMConfig = Field(default_factory=OpenaiLLMConfig)
+    gemini: GeminiLLMConfig = Field(default_factory=GeminiLLMConfig)
+    groq: GroqLLMConfig = Field(default_factory=GroqLLMConfig)
+
+
+@lru_cache(maxsize=1)
+def _load_llm_yaml() -> LLMYamlConfig:
+    path = _llm_yaml_path()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"LLM config not found at {path}. Copy config/llm.yaml or set LLM_CONFIG_PATH."
+        )
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return LLMYamlConfig.model_validate(raw)
+
+
+@lru_cache(maxsize=1)
+def get_chat_llm() -> BaseChatModel:
+    """Chat LLM from config/llm.yaml; keys from .env (cached)."""
+    yaml_cfg = _load_llm_yaml()
+    if yaml_cfg.provider == "openai":
+        if not settings.OPENAI_API_KEY:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set. Add it to .env for the OpenAI provider."
+            )
+        return ChatOpenAI(
+            model=yaml_cfg.openai.model,
             openai_api_key=settings.OPENAI_API_KEY,
-            temperature=0.3
+            temperature=yaml_cfg.openai.temperature,
         )
-        
-    async def generate(self, messages: List[BaseMessage]) -> Any:
-        return await self.llm.ainvoke(messages)
 
-class GeminiProvider(BaseLLMProvider):
-    def __init__(self, model_name: str | None = None):
-        api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name or settings.GEMINI_MODEL_NAME, 
-            google_api_key=api_key,
-            temperature=0.3
+    if yaml_cfg.provider == "groq":
+        if not settings.GROQ_API_KEY:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Add it to .env for the Groq provider."
+            )
+        return ChatGroq(
+            model=yaml_cfg.groq.model,
+            api_key=settings.GROQ_API_KEY,
+            temperature=yaml_cfg.groq.temperature,
         )
-        
-    async def generate(self, messages: List[BaseMessage]) -> Any:
-        return await self.llm.ainvoke(messages)
 
-class AutoSwitchingLLMProvider(BaseLLMProvider):
-    def __init__(self):
-        self.providers = []
-        
-        if settings.OPENAI_API_KEY and "your_" not in settings.OPENAI_API_KEY:
-            self.providers.append(("OpenAI", OpenAIProvider()))
-            
-        api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
-        if api_key and "your_" not in api_key:
-            self.providers.append(("Gemini", GeminiProvider()))
-            
-        if not self.providers:
-            logger.warning("No valid LLM providers configured.")
-
-    async def generate(self, messages: List[BaseMessage]) -> Any:
-        if not self.providers:
-            raise RuntimeError("No LLM API keys configured. Please add OPENAI_API_KEY or GEMINI_API_KEY.")
-
-        last_exception = None
-        for name, provider in self.providers:
-            try:
-                response = await provider.generate(messages)
-                return response
-            except Exception as e:
-                logger.warning(f"LLM Provider '{name}' failed: {str(e)}. Switching to next provider...")
-                last_exception = e
-                
-        logger.error("All auto-switching LLM providers failed.")
-        raise RuntimeError(f"LLM Generation failed across all providers. Last error: {str(last_exception)}")
-
-def get_llm_provider() -> BaseLLMProvider:
-    """Factory to retrieve our resilient auto-switching LLM provider."""
-    return AutoSwitchingLLMProvider()
+    api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
+    if not api_key:
+        raise RuntimeError(
+            "GOOGLE_API_KEY or GEMINI_API_KEY is required for the Gemini provider."
+        )
+    return ChatGoogleGenerativeAI(
+        model=yaml_cfg.gemini.model,
+        google_api_key=api_key,
+        temperature=yaml_cfg.gemini.temperature,
+    )

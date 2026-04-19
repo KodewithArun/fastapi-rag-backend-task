@@ -17,11 +17,18 @@ class Settings(BaseSettings):
 
     HUGGINGFACE_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
-    OPENAI_MODEL_NAME: str = "gpt-4o-mini"
     GOOGLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
-    GEMINI_MODEL_NAME: str = "gemini-pro"
-    
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
+    GROQ_API_KEY: str | None = None
+
+    LLM_CONFIG_PATH: str | None = None  # default config/llm.yaml
+    EMBEDDING_CONFIG_PATH: str | None = None  # default config/embeddings.yaml
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 settings = Settings()

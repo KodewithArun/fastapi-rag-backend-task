@@ -1,0 +1,11 @@
+# Embedder: huggingface | openai | gemini (keys in .env)
+provider: huggingface
+
+huggingface:
+  model: sentence-transformers/all-MiniLM-L6-v2
+
+openai:
+  model: text-embedding-3-small
+
+gemini:
+  model: models/embedding-001

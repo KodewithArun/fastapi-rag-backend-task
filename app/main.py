@@ -7,13 +7,14 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.ingestion import router as document_router
 from app.core.config import settings
 from app.core.logger import setup_logging
-from app.db.session import Base, engine
+from app.db.session import Base, engine, ensure_document_metadata_content_hash
 
 setup_logging()
 middleware_logger = logging.getLogger("system.middleware")
 
-# Initialize SQL tables synchronously on startup
+# DB tables on startup
 Base.metadata.create_all(bind=engine)
+ensure_document_metadata_content_hash()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

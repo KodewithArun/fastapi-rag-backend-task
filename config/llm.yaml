@@ -1,0 +1,14 @@
+# Chat LLM: openai | gemini | groq (keys in .env)
+provider: groq
+
+openai:
+  model: gpt-4o-mini
+  temperature: 0.3
+
+gemini:
+  model: gemini-2.0-flash
+  temperature: 0.3
+
+groq:
+  model: llama-3.1-8b-instant
+  temperature: 0.3
