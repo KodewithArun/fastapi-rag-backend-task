@@ -16,27 +16,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 _RAG_CHAT_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """You answer questions using only the retrieved passages below. Treat them as the single source of truth for facts related to documents, policies, and uploaded content.
+            """
+You answer questions using ONLY the retrieved passages.
 
-Retrieved passages:
-{combined_context}
+Rules:
+1. Do NOT hallucinate or assume missing facts.
+2. If information is missing, clearly say so.
+3. If no relevant context exists, say it cannot be determined.
 
-Guidelines:
-1. Every factual statement must be supported by the passages. If not present, clearly state that it is not available.
-2. Do not assume or infer missing details.
-3. If no relevant information is found, state that the answer cannot be determined from the available content.
-4. If passages contain conflicting information, mention the conflict and summarize both sides.
-
-Conversation history should only be used to understand context, not as a factual source.
-
-If the user wants to book an interview:
-- Collect name, email, date, and time.
-- Only proceed once all details are available.
-- After booking, respond normally without referring to tools or internal processes.
+IMPORTANT TOOL RULES:
+- If a tool is used, DO NOT modify or reinterpret tool output.
+- Tool output is FINAL and must be returned as-is.
+- Do NOT add or remove fields from tool results.
 """,
         ),
         MessagesPlaceholder("history"),
@@ -45,45 +41,69 @@ If the user wants to book an interview:
 )
 
 
+
 def create_book_interview_tool(db: Session):
     @tool(description="Book an interview using name, email, date (YYYY-MM-DD), and time (HH:MM AM/PM).")
-    def book_interview(
-        name: str,
-        email: str,
-        date: str,
-        time: str,
-    ) -> str:
+    def book_interview(name: str, email: str, date: str, time: str):
         """
-        Creates a new interview booking in the database and returns a confirmation message.
+        Creates a new interview booking in DB and returns structured data.
+        Prevents duplicate bookings for the same email, date, and time.
         """
         try:
-            new_booking = InterviewBooking(
+            # Check for duplicate booking
+            existing = db.query(InterviewBooking).filter(
+                InterviewBooking.email == email.strip(),
+                InterviewBooking.date == date.strip(),
+                InterviewBooking.time == time.strip()
+            ).first()
+            if existing:
+                logger.info(
+                    "Duplicate booking attempt: %s | %s | %s | ID=%s",
+                    name, date, time, existing.id
+                )
+                return {
+                    "status": "error",
+                    "message": "Duplicate booking: An interview is already scheduled for this email, date, and time.",
+                    "booking_id": existing.id,
+                    "name": existing.name,
+                    "email": existing.email,
+                    "date": existing.date,
+                    "time": existing.time
+                }
+
+            booking = InterviewBooking(
                 name=name.strip(),
                 email=email.strip(),
                 date=date.strip(),
                 time=time.strip(),
             )
-            db.add(new_booking)
+
+            db.add(booking)
             db.commit()
-            db.refresh(new_booking)
+            db.refresh(booking)
 
             logger.info(
-                "Interview booked for %s on %s at %s (ID: %s)",
-                name.strip(),
-                date.strip(),
-                time.strip(),
-                new_booking.id,
+                "Interview booked: %s | %s | %s | ID=%s",
+                name, date, time, booking.id
             )
 
-            return (
-                f"Interview scheduled for {name.strip()} on {date.strip()} "
-                f"at {time.strip()}. Booking ID: {new_booking.id}."
-            )
+            return {
+                "status": "success",
+                "name": name.strip(),
+                "email": email.strip(),
+                "date": date.strip(),
+                "time": time.strip(),
+                "booking_id": booking.id,
+                "message": "Interview successfully scheduled."
+            }
 
         except Exception as e:
             logger.error("Booking failed: %s", e)
             db.rollback()
-            return "Unable to complete the booking. Please check the details and try again."
+            return {
+                "status": "error",
+                "message": "Unable to complete booking. Please try again."
+            }
 
     return book_interview
 
@@ -91,13 +111,11 @@ def create_book_interview_tool(db: Session):
 def _assistant_text(ai_msg) -> str:
     content = ai_msg.content
     if isinstance(content, list):
-        parts = [
+        return " ".join(
             block.get("text", "")
             for block in content
-            if isinstance(block, dict) and "text" in block
-        ]
-        text = " ".join(parts).strip()
-        return text if text else str(content).strip()
+            if isinstance(block, dict)
+        ).strip()
     return str(content or "").strip()
 
 
@@ -119,43 +137,41 @@ class RAGService:
         db: Session,
         document_id: Optional[str] = None,
     ) -> str:
+
         try:
             query_vector = get_embedder().embed_query(query)
+
             results = await self.qdrant.search_similar(
                 query_vector, limit=15, document_id=document_id
             )
 
             context_blocks = []
-            seen_texts = set()
+            seen = set()
 
-            for res in results:
-                text = res.get("text", "").strip()
-                if not text or text in seen_texts:
+            for r in results:
+                text = r.get("text", "").strip()
+                if not text or text in seen:
                     continue
 
-                seen_texts.add(text)
+                seen.add(text)
 
-                doc_info = f"Document ID: {res.get('document_id', 'Unknown')}"
-                if res.get("chunk_index") is not None:
-                    doc_info += f" (Chunk {res.get('chunk_index')})"
+                doc_info = f"Document ID: {r.get('document_id', 'Unknown')}"
+                if r.get("chunk_index") is not None:
+                    doc_info += f" (Chunk {r['chunk_index']})"
 
-                context_blocks.append(f"Source [{doc_info}]:\n{text}")
+                context_blocks.append(f"[{doc_info}]\n{text}")
 
                 if len(context_blocks) >= 5:
                     break
 
-            combined_context = (
-                "\n\n---\n\n".join(context_blocks)
-                if context_blocks
-                else "No relevant context found."
-            )
+            combined_context = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
 
         except Exception as e:
-            logger.error("Context retrieval failed: %s", e)
-            combined_context = "Unable to retrieve relevant documents."
+            logger.error("Vector search failed: %s", e)
+            combined_context = "Unable to retrieve context."
 
         chat_history = await self.memory.get_chat_history(session_id)
-        trimmed_history = chat_history[-10:] if len(chat_history) > 10 else chat_history
+        trimmed_history = chat_history[-10:]
 
         prompt_value = await _RAG_CHAT_PROMPT.ainvoke(
             {
@@ -166,7 +182,6 @@ class RAGService:
         )
 
         messages = prompt_value.to_messages()
-        user_msg = messages[-1]
 
         book_tool = create_book_interview_tool(db)
         llm_with_tools = self.llm.bind_tools([book_tool])
@@ -179,24 +194,24 @@ class RAGService:
 
                 for tool_call in ai_msg.tool_calls:
                     if tool_call["name"] == book_tool.name:
-                        try:
-                            result = book_tool.invoke(tool_call["args"])
-                        except Exception as e:
-                            logger.error("Tool execution error: %s", e)
-                            result = "Unable to complete the booking."
+
+                        result = book_tool.invoke(tool_call["args"])
 
                         tool_msg = ToolMessage(
                             tool_call_id=tool_call["id"],
-                            content=result,
+                            content=str(result),
                         )
+
                         messages.append(tool_msg)
 
-                ai_msg = await self.llm.ainvoke(messages)
+                        await self.memory.add_messages(session_id, [tool_msg])
 
-            await self.memory.add_messages(session_id, [user_msg, ai_msg])
+                        return str(result)
+
+            await self.memory.add_messages(session_id, [ai_msg])
 
             return _assistant_text(ai_msg)
 
-        except Exception:
-            logger.exception("LLM response generation failed")
-            return "The system is currently unavailable. Please try again later."
+        except Exception as e:
+            logger.exception("LLM failure: %s", e)
+            return "System error. Please try again later."
